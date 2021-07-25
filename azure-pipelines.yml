@@ -1,0 +1,79 @@
+trigger:
+  branches:
+    include:
+    - '*'
+
+schedules:
+  - cron: "0 3 * * 0"
+    displayName: Weekly Build
+    branches:
+      include:
+      - main
+
+variables:
+  versionMajor: 1
+  versionMinor: 0
+
+stages:
+- stage: dependency_check
+  jobs:
+  - template: dependency-check.yml
+
+- stage: build
+  jobs:
+  - job: build
+    pool:
+      vmImage: 'windows-latest'
+
+    variables:
+      solution: '**/*.sln'
+      buildPlatform: 'Any CPU'
+      buildConfiguration: 'Release'
+
+    steps:
+    - task: NuGetToolInstaller@1
+
+    - task: NuGetCommand@2
+      inputs:
+        restoreSolution: '$(solution)'
+        command: 'restore'
+        feedsToUse: 'config'
+        nugetConfigPath: './src/nuget.config'
+
+    - task: VSBuild@1
+      inputs:
+        solution: '$(solution)'
+        platform: '$(buildPlatform)'
+        configuration: '$(buildConfiguration)'
+
+    - task: DotNetCoreCLI@2
+      displayName: "Pack XI.CommonTypes"
+      inputs:
+        command: pack
+        packagesToPack: '$(Build.SourcesDirectory)/src/XI.CommonTypes/XI.CommonTypes.csproj'
+        packDestination: '$(Build.ArtifactStagingDirectory)'
+        buildProperties: 'Version="$(versionMajor).$(versionMinor).$(Build.BuildId)"'
+
+    - publish: $(Build.artifactStagingDirectory)
+      displayName: Publish NuGet artifact
+      artifact: nuget
+
+- stage: publish
+  jobs:
+    - job: publish
+      pool:
+        vmImage: 'windows-latest'
+
+      steps:
+      - download: current
+        artifact: nuget
+
+      - task: NuGetToolInstaller@1
+
+      - task: NuGetCommand@2
+        displayName: 'NuGet push'
+        inputs:
+          command: push
+          packagesToPush: '$(Pipeline.Workspace)/nuget/*.nupkg'
+          publishVstsFeed: '9a8cd583-aad3-46f3-a863-a768e462a8fe/0c42504e-bf17-46f4-9903-ade87ac760cd'
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
